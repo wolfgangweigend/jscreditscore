@@ -4,123 +4,26 @@ build:
     - script:
         name: A step that executes `npm install` command
         code: npm install  
-    - script:
-        name: Create TLS key and cert
-        code: openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -subj "/CN=nginxsvc/O=nginxsvc"
 
-push-to-releases:
+push-to-docker-registry:
   steps:
     # Push to public docker repo Container Registry (CR)
     - internal/docker-push:
-        tag: $WERCKER_GIT_BRANCH-$WERCKER_GIT_COMMIT
+        username: $DOCKER_USERNAME
+        password: $DOCKER_PASSWORD
+        tag: "latest"
+        repository: $DOCKER_REPOSITORY
+        registry: https://index.docker.io/v2/
         cmd: node /pipeline/source/app.js
 
 deploy-to-oke:
-  box:
-        id: alpine
-        cmd: /bin/sh
   steps:
-    - bash-template
-    
-    - script:
-        name: "Visualise Kubernetes config"
-        code: cat kubernetes-deployment.yml
-    
+    # execute kubectl command
     - kubectl:
-        name: delete namespace
-        server: $KUBERNETES_MASTER
-        token: $KUBERNETES_TOKEN
-        insecure-skip-tls-verify: true
-        command: delete namespace $WERCKER_APPLICATION_OWNER_NAME --ignore-not-found=true
-        
-    - script:
-        name: wait to delete namespace
-        code: sleep 30
-        
-    - kubectl:
-        name: create namespace    
-        server: $KUBERNETES_MASTER
-        token: $KUBERNETES_TOKEN
-        insecure-skip-tls-verify: true
-        command: create namespace $WERCKER_APPLICATION_OWNER_NAME
-        
-    - kubectl:
-        name: create OCR secret
-        server: $KUBERNETES_MASTER
-        token: $KUBERNETES_TOKEN
-        insecure-skip-tls-verify: true
-        command: create secret docker-registry wrelease --docker-server=wcr.io --docker-username=$WERCKER_APPLICATION_OWNER_NAME --docker-password=$KUBERNETES_TOKEN --docker-email=${WERCKER_APPLICATION_OWNER_NAME}@mail.com --namespace=$WERCKER_APPLICATION_OWNER_NAME
+          name: execute kubectl command
+          debug: true
+          server: $KUBERNETES_MASTER
+          token: $KUBERNETES_TOKEN
+          insecure-skip-tls-verify: true
+          command: set image deployment/jscreditscore jscreditscore=docker.io/dockerwwme/jscreditscore:latest
 
-    - kubectl:
-        name: create TLS secret
-        server: $KUBERNETES_MASTER
-        token: $KUBERNETES_TOKEN
-        insecure-skip-tls-verify: true
-        command: create secret tls tls-secret --key $WERCKER_ROOT/tls.key --cert $WERCKER_ROOT/tls.crt --namespace=$WERCKER_APPLICATION_OWNER_NAME
-        
-    - kubectl:
-        name: create deplyoment
-        server: $KUBERNETES_MASTER
-        token: $KUBERNETES_TOKEN
-        insecure-skip-tls-verify: true
-        command: create -f $WERCKER_ROOT/kubernetes-deployment.yml --namespace=$WERCKER_APPLICATION_OWNER_NAME
-
-    - script:
-        name: "Visualise Ingress config"
-        code: cat ingress.yml
-
-    - kubectl:
-        name: create Ingress configuration
-        server: $KUBERNETES_MASTER
-        token: $KUBERNETES_TOKEN
-        insecure-skip-tls-verify: true
-        command: create -f $WERCKER_ROOT/ingress.yml --namespace=$WERCKER_APPLICATION_OWNER_NAME
-
-    - kubectl:
-        name: get LoadBalancer public IP address
-        server: $KUBERNETES_MASTER
-        token: $KUBERNETES_TOKEN
-        insecure-skip-tls-verify: true
-        command: get svc -o jsonpath='{.items[*].status.loadBalancer.ingress[*].ip}' --all-namespaces
-
-functional-test:
-  steps:
-    - script:
-        name: Run and Test microservice
-        code: |
-              mkdir -p "/pipeline"
-              node $WERCKER_ROOT/app.js &
-              sleep 5
-              CREDITSCORE_URL=http://localhost:3000/creditscore
-              echo 'Microservice URL=' $CREDITSCORE_URL
-              if curl -X POST -H "Content-Type: application/json" -X POST -d '{"firstname":"John","lastname":"Doe","dateofbirth":"01/01/2015","ssn":"111223333"}' $CREDITSCORE_URL | grep "firstname"
-              then
-                  # if the keyword is in the conent
-                  echo "Test passed"
-              else
-                  echo "Test failed"
-                  exit -1
-              fi
-              sleep 1
-
-ui-functional-test:
-  box:
-    id: peternagy/chrome-protractor-headless-test:node9.2-chrome62
-  steps:
-    - script:
-        name: Run UI test
-        code: | 
-              nohup node $WERCKER_ROOT/app.js > creditscoreapp.log &
-              echo 'Application URL to test: http://localhost:3000/creditscore'
-              protractor $WERCKER_ROOT/test/protractor.conf.js
-              exit_status=$?
-              echo 'CreditScore app server log :::START'
-              cat creditscoreapp.log
-              echo 'CreditScore app server log :::END'
-              if [ $exit_status -eq 0 ]; then
-                echo "UI test passed"
-              else
-                echo "UI test failed"
-                exit -1
-              fi                
-              
