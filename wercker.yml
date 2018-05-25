@@ -26,3 +26,4 @@ deploy-to-oke:
           token: $KUBERNETES_TOKEN
           insecure-skip-tls-verify: true
           command: set image deployment/jscreditscore jscreditscore=docker.io/dockewwme/jscreditscore:${WERCKER_GIT_COMMIT}
+          
